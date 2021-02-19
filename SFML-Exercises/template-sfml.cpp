@@ -29,12 +29,6 @@ constexpr float rad_to_deg{180.f/pi};
 namespace default_vals {
     constexpr unsigned int window_w{1500};
     constexpr unsigned int window_h{900};
-    constexpr unsigned int curve_order{2};
-    constexpr float c_radius{10.f};
-    constexpr float smoothness{10.f};
-    constexpr unsigned int control_points{3};
-    constexpr int curves = (control_points-1)/2;
-    constexpr int points = curves * smoothness + 1;
 }
 
 template <typename T>
@@ -47,90 +41,21 @@ T cross (const sf::Vector2<T>& a, const sf::Vector2<T>& b) {
     return a.x*b.y - b.x*a.y;
 }
 
-template <typename T>
-sf::Vector2<T> lerp(const sf::Vector2<T>& v0, const sf::Vector2<T>& v1, T t) {
-	return v0 + ((v1 - v0) * t);
-}
-
-template <typename T>
-sf::Vector2<T> make_curve(const sf::Vector2<T>& v0, const sf::Vector2<T>& v1, const sf::Vector2<T>& v2, T t) {
-	return lerp(lerp(v0, v1, t), lerp(v1, v2, t), t);
-}
-
 // enumerations
 enum Direction {up, down, left, right};
 
 // globals
 unsigned int window_w{default_vals::window_w};
 unsigned int window_h{default_vals::window_h};
-int curve_order{default_vals::curve_order};
-float c_radius{default_vals::c_radius};
-float smoothness{default_vals::smoothness};
-int control_points{default_vals::control_points};
-int curves{default_vals::curves};
-int points{default_vals::points};
-float inv_smoothness{1.f/smoothness};
 
 bool directionFlags[4] = {false, false, false, false};
 bool leftMouseButtonFlag = false;
 
-std::vector<sf::CircleShape> circles;
-sf::VertexArray ctrlPoints{sf::LineStrip};
-sf::VertexArray allPoints{sf::LineStrip};
-std::vector<bool> circlesFlags;
-std::vector<std::vector<long long>> pascal;
-std::vector<std::vector<float>> poly_coefs;
-
-void updatePascalTriangle(unsigned int order) {
-    pascal.resize(order+1);
-    for (unsigned int i = 0; i <= order; ++i) {
-        pascal[i].resize(i+1);
-        pascal[i][0] = pascal[i][i] = 1;
-        for (unsigned int j = 1; j < i; ++j) {
-            pascal[i][j] = pascal[i-1][j-1] + pascal[i-1][j];
-        }
-    }
-}
-
-void updatePolyCoefs(unsigned int level, unsigned int order) {
-    updatePascalTriangle(order);
-    poly_coefs.resize(level+1);
-    for (unsigned int i = 0; i <= level; ++i) {
-        poly_coefs[i].resize(order+1);
-        float g = inv_smoothness * i;
-        float f = 1.f - g;
-        for (unsigned int j = 0; j <= order; ++j) {
-            poly_coefs[i][j] = pascal[order][j] * std::pow(f, order - j) * std::pow(g, j);
-        }
-    }
-}
-
-void updateVertexPoint(int idx) {
-    for (unsigned int i = 0; i <= smoothness; ++i) {
-        allPoints[idx * smoothness + i] = zero_vector;
-        for (unsigned int j = 0; j <= curve_order; ++j) {
-            // sums the polynomial
-            allPoints[idx * smoothness + i].position +=
-                ctrlPoints[idx * curve_order + j].position * poly_coefs[i][j];    
-        }
-    }
-}
-
 bool readFromAvailableText() {
     std::string input;
-    std::ifstream settings("bezier-binomial.txt");
+    std::ifstream settings("collision.txt");
     if (settings.is_open()) {
-        settings >> curve_order;
-    	settings >> smoothness;
-    	settings >> control_points;
-    	circles.resize(control_points);
-    	float x, y;
-    	for (unsigned int i = 0; i < control_points; ++i) {
-    		settings >> x >> y;
-    		circles[i].setRadius(c_radius);
-    		circles[i].setOrigin(c_radius, c_radius);
-    		circles[i].setPosition(x, y);
-    	}
+        // read stuff here
         settings.close();
         return true;
     } else {
@@ -140,36 +65,9 @@ bool readFromAvailableText() {
 
 void initializeSettings() {
     if (readFromAvailableText()) {
-        std::cout << "bezier-binomial.txt successfully loaded.\n";
+        std::cout << "collision.txt successfully loaded.\n";
     } else {
-        std::cout << "bezier-binomial.txt not loaded. Using default values.\n";
-        circles.resize(control_points);
-    	for (unsigned int i = 0; i < control_points; ++i) {
-    		circles[i].setRadius(c_radius);
-    		circles[i].setOrigin(c_radius, c_radius);
-    		circles[i].setPosition(1.f * window_w / control_points * i + c_radius, window_h / 2.f); 
-    	}
-    }
-
-    inv_smoothness = 1.f/smoothness;
-    curves = (control_points-1)/curve_order;
-    points = curves * smoothness + 1;
-    ctrlPoints.resize(control_points);
-    allPoints.resize(points);
-    circlesFlags.resize(control_points);
-
-    updatePolyCoefs(smoothness, curve_order);
-
-    for (unsigned int i = 0; i < control_points; ++i) {
-    	ctrlPoints[i].position = circles[i].getPosition();
-    	circles[i].setFillColor(sf::Color::Transparent);
-    	circles[i].setOutlineColor(sf::Color::Green);
-    	circles[i].setOutlineThickness(2.f);
-    	circlesFlags[i] = false;
-    }
-
-    for (unsigned int i = 0; i < curves; ++i) {
-    	updateVertexPoint(i);
+        std::cout << "collision.txt not loaded. Using default values.\n";
     }
 }
 
@@ -244,40 +142,18 @@ void handleInput(sf::RenderWindow& window) {
 
 void update(const sf::Time& elapsed, sf::RenderWindow& window) {
     float delta = elapsed.asSeconds();
-
-    sf::Vector2f mousePosition = sf::Vector2f(sf::Mouse::getPosition(window));
-    sf::Vector2f placeholder;
-
-    if (leftMouseButtonFlag) {
-    	for (int i = 0; i < control_points; ++i) {
-    		placeholder = circles[i].getPosition() - mousePosition;
-    		float dist = std::hypot(placeholder.x, placeholder.y);
-    		if (dist < c_radius) {
-    			ctrlPoints[i].position = mousePosition;
-    			circles[i].setPosition(mousePosition);
-    			circlesFlags[i] = true;
-    			if (i%2 == 0) {
-    				updateVertexPoint(std::max(i/int(curve_order) - 1, 0));
-    			}
-    			updateVertexPoint(std::min(i/int(curve_order), int(curves)-1));
-    			break;
-    		}
-    	}
-    }
+    // update stuff here
 }
 
 void render(sf::RenderWindow& window) {
     window.clear(sf::Color::Black);
-    for (unsigned int i = 0; i < control_points; ++i) {
-    	window.draw(circles[i]);
-    }
-    window.draw(allPoints);
+    // draw stuff here
     window.display();
 }
 
 int main () {
     srand(time(NULL));
-    sf::RenderWindow window(sf::VideoMode(window_w, window_h), "Bezier-02");
+    sf::RenderWindow window(sf::VideoMode(window_w, window_h), "Collision");
 	window.setFramerateLimit(fps_limit);
 
     initializeSettings();
