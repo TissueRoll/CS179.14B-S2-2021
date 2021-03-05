@@ -1,6 +1,5 @@
 #include <iostream>
 #include <math.h>
-#include <cmath> // pow
 #include <fstream>
 #include <vector>
 #include <SFML/Graphics.hpp>
@@ -27,17 +26,13 @@ constexpr float rad_to_deg{180.f/pi};
 
 // default values
 namespace default_vals {
-    constexpr unsigned int window_w{800};
-    constexpr unsigned int window_h{600};
-    constexpr unsigned int boxes_count{5};
-    constexpr float speed{10.f};
-    const sf::Vector2f rectSizes[boxes_count] = {
-        sf::Vector2f(130,130),
-        sf::Vector2f(130,100),
-        sf::Vector2f(80,110),
-        sf::Vector2f(90,80),
-        sf::Vector2f(70,300)
-    };
+    constexpr unsigned int window_w{1500};
+    constexpr unsigned int window_h{900};
+    constexpr float c_radius{10.f};
+    constexpr float smoothness{10.f};
+    constexpr unsigned int control_points{3};
+    constexpr int curves = (control_points-1)/2;
+    constexpr int points = curves * smoothness + 1;
 }
 
 template <typename T>
@@ -50,41 +45,62 @@ T cross (const sf::Vector2<T>& a, const sf::Vector2<T>& b) {
     return a.x*b.y - b.x*a.y;
 }
 
+template <typename T>
+sf::Vector2<T> lerp(const sf::Vector2<T>& v0, const sf::Vector2<T>& v1, T t) {
+	return v0 + ((v1 - v0) * t);
+}
+
+template <typename T>
+sf::Vector2<T> make_curve(const sf::Vector2<T>& v0, const sf::Vector2<T>& v1, const sf::Vector2<T>& v2, T t) {
+	return lerp(lerp(v0, v1, t), lerp(v1, v2, t), t);
+}
+
 // enumerations
 enum Direction {up, down, left, right};
 
 // globals
 unsigned int window_w{default_vals::window_w};
 unsigned int window_h{default_vals::window_h};
-unsigned int boxes_count{default_vals::boxes_count};
-float speed{default_vals::speed};
+float c_radius{default_vals::c_radius};
+float smoothness{default_vals::smoothness};
+unsigned int control_points{default_vals::control_points};
+int curves{default_vals::curves};
+int points{default_vals::points};
+float inv_smoothness{1.f/smoothness};
 
 bool directionFlags[4] = {false, false, false, false};
 bool leftMouseButtonFlag = false;
 
-std::vector<sf::RectangleShape> rects;
-std::vector<sf::RectangleShape> boundingBoxEntity;
-std::vector<sf::FloatRect> boundingBoxValues;
-std::vector<sf::Vector2f> rectSizes;
 
-void resizeVectors(unsigned int size) {
-    rects.resize(size);
-    boundingBoxEntity.resize(size);
-    boundingBoxValues.resize(size);
-    rectSizes.resize(size);
+std::vector<sf::CircleShape> circles;
+sf::VertexArray ctrlPoints{sf::LineStrip};
+sf::VertexArray allPoints{sf::LineStrip};
+std::vector<bool> circlesFlags;
+
+void updateVertexPoint(int idx) {
+	for (unsigned int i = 0; i <= smoothness; ++i) {
+		allPoints[idx * smoothness + i].position = 
+		make_curve(ctrlPoints[idx * 2].position,
+			ctrlPoints[idx * 2 + 1].position,
+			ctrlPoints[idx * 2 + 2].position,
+			inv_smoothness * i);
+	}
 }
 
 bool readFromAvailableText() {
     std::string input;
-    std::ifstream settings("collision.txt");
+    std::ifstream settings("hw03.txt");
     if (settings.is_open()) {
-        settings >> window_w >> window_h;
-        settings >> speed;
-        settings >> boxes_count;
-        resizeVectors(boxes_count);
-        for (unsigned int i = 0; i < boxes_count; ++i) {
-            settings >> rectSizes[i].x >> rectSizes[i].y;
-        }
+    	settings >> smoothness;
+    	settings >> control_points;
+    	circles.resize(control_points);
+    	float x, y;
+    	for (unsigned int i = 0; i < control_points; ++i) {
+    		settings >> x >> y;
+    		circles[i].setRadius(c_radius);
+    		circles[i].setOrigin(c_radius, c_radius);
+    		circles[i].setPosition(x, y);
+    	}
         settings.close();
         return true;
     } else {
@@ -94,26 +110,35 @@ bool readFromAvailableText() {
 
 void initializeSettings() {
     if (readFromAvailableText()) {
-        std::cout << "collision.txt successfully loaded.\n";
+        std::cout << "hw03.txt successfully loaded.\n";
     } else {
-        std::cout << "collision.txt not loaded. Using default values.\n";
-        resizeVectors(boxes_count);
-        for (unsigned int i = 0; i < boxes_count; ++i) {
-            rectSizes[i] = default_vals::rectSizes[i];
-        }
+        std::cout << "hw03.txt not loaded. Using default values.\n";
+        circles.resize(control_points);
+    	for (unsigned int i = 0; i < control_points; ++i) {
+    		circles[i].setRadius(c_radius);
+    		circles[i].setOrigin(c_radius, c_radius);
+    		circles[i].setPosition(1.f * window_w / control_points * i + c_radius, window_h / 2.f); 
+    	}
     }
 
-    for (unsigned int i = 0; i < boxes_count; ++i) {
-        rects[i].setSize(rectSizes[i]);
-        rects[i].setOrigin(rectSizes[i].x / 2, rectSizes[i].y / 2);
+    inv_smoothness = 1.f/smoothness;
+    curves = (control_points-1)/2;
+    points = curves * smoothness + 1;
+    ctrlPoints.resize(control_points);
+    allPoints.resize(points);
+    circlesFlags.resize(control_points);
+
+    for (unsigned int i = 0; i < control_points; ++i) {
+    	ctrlPoints[i].position = circles[i].getPosition();
+    	circles[i].setFillColor(sf::Color::Transparent);
+    	circles[i].setOutlineColor(sf::Color::Green);
+    	circles[i].setOutlineThickness(2.f);
+    	circlesFlags[i] = false;
     }
 
-    // TODO: distribute them fairly
-    rects[0].setPosition(window_w/4, window_h/4);
-    rects[1].setPosition((3*window_w)/4, window_h/4);
-    rects[2].setPosition(window_w/4, (3*window_h)/4);
-    rects[3].setPosition((3*window_w)/4, (3*window_h)/4);
-    rects[4].setPosition(window_w/2, window_h/2);
+    for (unsigned int i = 0; i < curves; ++i) {
+    	updateVertexPoint(i);
+    }
 }
 
 void pressEvents(sf::RenderWindow& window, const sf::Event& event) {
@@ -187,71 +212,40 @@ void handleInput(sf::RenderWindow& window) {
 
 void update(const sf::Time& elapsed, sf::RenderWindow& window) {
     float delta = elapsed.asSeconds();
-    // update stuff here
 
-    sf::Vector2f dir;
-    if (directionFlags[static_cast<unsigned int>(Direction::up)]) dir.y -= 69.f;
-    if (directionFlags[static_cast<unsigned int>(Direction::left)]) dir.x -= 69.f;
-    if (directionFlags[static_cast<unsigned int>(Direction::down)]) dir.y += 69.f;
-    if (directionFlags[static_cast<unsigned int>(Direction::right)]) dir.x += 69.f;
-    float dir_mag = std::hypot(dir.x, dir.y);
-    if (dir_mag > epsilon) {
-        sf::Vector2f v = (dir / dir_mag) * speed * delta;
-        rects[0].move(v);
+    sf::Vector2f mousePosition = sf::Vector2f(sf::Mouse::getPosition(window));
+    sf::Vector2f placeholder;
+
+    if (leftMouseButtonFlag) {
+    	for (int i = 0; i < control_points; ++i) {
+    		placeholder = circles[i].getPosition() - mousePosition;
+    		float dist = std::hypot(placeholder.x, placeholder.y);
+    		if (dist < c_radius) {
+    			ctrlPoints[i].position = mousePosition;
+    			circles[i].setPosition(mousePosition);
+    			circlesFlags[i] = true;
+    			if (i%2 == 0) {
+    				updateVertexPoint(std::max(i/2 - 1, 0));
+    			}
+    			updateVertexPoint(std::min(i/2, curves-1));
+    			break;
+    		}
+    	}
     }
-
-    // TODO: make this prettier
-    if(rects[0].getPosition().x - 50 < 0)        rects[0].setPosition(50, rects[0].getPosition().y);
-    if(rects[0].getPosition().x + 50 > window_w) rects[0].setPosition(window_w - 50, rects[0].getPosition().y);
-    if(rects[0].getPosition().y - 50 < 0)        rects[0].setPosition(rects[0].getPosition().x, 50);
-    if(rects[0].getPosition().y + 50 > window_h) rects[0].setPosition(rects[0].getPosition().x, window_h - 50);
-
-    rects[0].rotate(5.f / 3.f);
-    rects[1].rotate(4.f / 3.f);
-    rects[2].rotate(3.f / 3.f);
-    rects[3].rotate(2.f / 3.f);
-    rects[4].rotate(1.f / 3.f);
-
-    for(int i = 0; i < 5; i++)
-        rects[i].setFillColor(sf::Color::White);
-
-    for(int i = 0; i < 5; i++)
-    {
-        boundingBoxValues[i] = rects[i].getGlobalBounds();
-        boundingBoxEntity[i].setSize(sf::Vector2f(boundingBoxValues[i].width, boundingBoxValues[i].height));
-        boundingBoxEntity[i].setPosition(boundingBoxValues[i].left, boundingBoxValues[i].top); 
-        boundingBoxEntity[i].setFillColor(sf::Color::Transparent);
-        boundingBoxEntity[i].setOutlineThickness(1.0f);
-        boundingBoxEntity[i].setOutlineColor(sf::Color::White);
-    }
-
-    for(int i = 0; i < boxes_count; i++)
-    {
-        for(int j = i+1; j < boxes_count; j++)
-        {
-            if(boundingBoxValues[i].intersects(boundingBoxValues[j]))
-            {  
-                rects[i].setFillColor(sf::Color::Green);
-                rects[j].setFillColor(sf::Color::Green);
-                boundingBoxEntity[i].setOutlineColor(sf::Color::Green);
-                boundingBoxEntity[j].setOutlineColor(sf::Color::Green);           
-            }
-        }
-    }  
 }
 
 void render(sf::RenderWindow& window) {
     window.clear(sf::Color::Black);
-    for (unsigned int i = 0; i < boxes_count; ++i) {
-        window.draw(rects[i]);
-        window.draw(boundingBoxEntity[i]);
+    for (unsigned int i = 0; i < control_points; ++i) {
+    	window.draw(circles[i]);
     }
+    window.draw(allPoints);
     window.display();
 }
 
 int main () {
     srand(time(NULL));
-    sf::RenderWindow window(sf::VideoMode(window_w, window_h), "Collision");
+    sf::RenderWindow window(sf::VideoMode(window_w, window_h), "HW03");
 	window.setFramerateLimit(fps_limit);
 
     initializeSettings();
