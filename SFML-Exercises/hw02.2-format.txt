@@ -1,0 +1,9 @@
+window_w window_h
+speed
+N
+P
+P_i_j
+...
+Pos_i
+
+...
